@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,7 @@ type Config struct {
 	DatabaseURL           string
 	RedisURL              string
 	RedisKeyPrefix        string
+	RedisTLSInsecure      bool
 	BucketName            string
 	BucketCredentialsFile string
 	PubSubProjectID       string
@@ -95,6 +97,7 @@ func loadConfig() (Config, error) {
 		DatabaseURL:           strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		RedisURL:              strings.TrimSpace(os.Getenv("REDIS_URL")),
 		RedisKeyPrefix:        envOrDefault("REDIS_KEY_PREFIX", "infra-smoke"),
+		RedisTLSInsecure:      strings.EqualFold(strings.TrimSpace(os.Getenv("REDIS_TLS_INSECURE_SKIP_VERIFY")), "true"),
 		BucketName:            strings.TrimSpace(os.Getenv("BUCKET_NAME")),
 		BucketCredentialsFile: strings.TrimSpace(os.Getenv("BUCKET_CREDENTIALS_FILE")),
 		PubSubProjectID:       strings.TrimSpace(os.Getenv("PUBSUB_PROJECT_ID")),
@@ -176,6 +179,7 @@ func (a *App) runSmoke(ctx context.Context) *SmokeResult {
 			"redis_key_prefix":    a.cfg.RedisKeyPrefix,
 			"bucket_auth_mode":    authMode(a.cfg.BucketCredentialsFile),
 			"pubsub_auth_mode":    authMode(a.cfg.PubSubCredentialsFile),
+			"redis_tls_insecure":  fmt.Sprintf("%t", a.cfg.RedisTLSInsecure),
 		},
 	}
 
@@ -243,6 +247,12 @@ func (a *App) testRedis(ctx context.Context, runID string, out map[string]any) e
 	opt, err := redis.ParseURL(a.cfg.RedisURL)
 	if err != nil {
 		return err
+	}
+	if strings.HasPrefix(a.cfg.RedisURL, "rediss://") || a.cfg.RedisTLSInsecure {
+		if opt.TLSConfig == nil {
+			opt.TLSConfig = &tls.Config{}
+		}
+		opt.TLSConfig.InsecureSkipVerify = a.cfg.RedisTLSInsecure
 	}
 	client := redis.NewClient(opt)
 	defer client.Close()
